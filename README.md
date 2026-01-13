@@ -1,5 +1,8 @@
 # Onshape-CAD-Parser TU-Chemnitz Version
 
+[![DOI](https://zenodo.org/badge/1130316750.svg)](https://doi.org/10.5281/zenodo.18232242)
+
+
 This is a currently working branch of the [Onshape-CAD-Parser](https://github.com/rundiwu/onshape-cad-parser) developed by Rundi Wu. It drastically reduces API calls and avoids a critical bug in the OnShape API that caused the old version to stop functioning by loading from an offline copy of the ABC dataset.
 
 ## Changes
