@@ -1,7 +1,6 @@
-import pprint
-import os
 import copy
 import numpy as np
+import re
 from collections import OrderedDict
 from utils import xyz_list2dict, angle_from_vector_to_x
 
@@ -13,7 +12,7 @@ OPERATION_MAP = {'NEW': 'NewBodyFeatureOperation', 'ADD': 'JoinFeatureOperation'
 
 class FeatureListParser(object):
     """A parser for OnShape feature list (construction sequence)"""
-    def __init__(self, client, did, wid, eid, data_id=None):
+    def __init__(self, client, did, wid, eid, ofs_data, data_id=None):
         self.c = client
 
         self.did = did
@@ -21,7 +20,7 @@ class FeatureListParser(object):
         self.eid = eid
         self.data_id = data_id
 
-        self.feature_list = self.c.get_features(did, wid, eid).json()
+        self.feature_list = ofs_data
 
         self.profile2sketch = {}
 
@@ -46,12 +45,30 @@ class FeatureListParser(object):
         return param_dict
 
     def _parse_sketch(self, feature_data):
-        sket_parser = SketchParser(self.c, feature_data, self.did, self.wid, self.eid)
+        sket_parser = SketchParser(self.c, feature_data, self.did, self.wid, self.eid, data_id=self.data_id)
         save_dict = sket_parser.parse_to_fusion360_format()
         return save_dict
 
     def _expr2meter(self, expr):
-        return self.c.expr2meter(self.did, self.wid, self.eid, expr)
+        val = re.findall("[0-9,.]+", expr)[0]
+        unit = re.findall("[a-zA-Z]+", expr)[0]
+        unit = unit.lower()
+        if val[0] == ".":
+            val = "0" + val
+        val = float(val)
+        if unit[0] == "i": #Inch
+            return 0.0254 * val
+        elif unit[0] == "f": #Foot
+            return 0.3048 * val
+        elif unit[0] == "y": #Yard
+            return 0.9144 * val
+        elif unit[0] == "c": #Centimeter
+            return val / 100
+        elif unit[0] == "m":
+            if ("mm" in unit) or ("mi" in unit): #Millimeter
+                return val / 1000
+            else: #Meter
+                return val
 
     def _locateSketchProfile(self, geo_ids):
         return [{"profile": k, "sketch": self.profile2sketch[k]} for k in geo_ids]
@@ -274,6 +291,7 @@ class SketchParser(object):
             end_point = xyz_list2dict(self.vert_table[end_id]["param"]["Vector"])
             center_point = xyz_list2dict(edge_data["param"]["coordSystem"]["origin"])
             normal = xyz_list2dict(edge_data["param"]["coordSystem"]["zAxis"])
+            midpoint = edge_data["param"]["midpoint"]
 
             start_vec = np.array(self.vert_table[start_id]["param"]["Vector"]) - \
                         np.array(edge_data["param"]["coordSystem"]["origin"])
@@ -299,7 +317,6 @@ class SketchParser(object):
             #     start_vec = end_vec
 
             # decide direction by middle point
-            midpoint = self.c.eval_curve_midpoint(self.did, self.wid, self.eid, edge_id)
             mid_vec = np.array(midpoint) - self.origin
             mid_vec = np.array([np.dot(mid_vec, self.x_axis), np.dot(mid_vec, self.y_axis), np.dot(mid_vec, self.z_axis)])
             mid_vec = mid_vec - np.array(edge_data["param"]["coordSystem"]["origin"])

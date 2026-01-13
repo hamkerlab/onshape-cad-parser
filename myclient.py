@@ -5,9 +5,9 @@ class MyClient(Client):
     """inherited from OnShape public apikey python client, 
     with additional method for parsing cad.
     """
-    def get_tessellatedfaces(self, did, wid, eid):
-        """
-        Gets the feature list for specified document / workspace / part studio.
+    def eval_boundingBox(self, did, wid, eid):
+        '''
+        Get bounding box of all solid bodies for specified document / workspace / part studio.
 
         Args:
             - did (str): Document ID
@@ -15,9 +15,26 @@ class MyClient(Client):
             - eid (str): Element ID
 
         Returns:
-            - requests.Response: OnShape response data
-        """
-        return self._api.request('get', '/api/partstudios/d/' + did + '/w/' + wid + '/e/' + eid + '/tessellatedfaces')
+            - dict: {'maxCorner': [], 'minCorner': []}
+        '''
+        body = {
+            "script":
+                "function(context is Context, queries) { " +
+                "   var q_body = qBodyType(qEverything(EntityType.BODY), BodyType.SOLID);"
+                "   var bbox = evBox3d(context, {'topology': q_body});"
+                "   return bbox;"
+                "}",
+            "queries": []
+        }
+        response = self._api.request('post', '/api/partstudios/d/' + did + '/w/' + wid + '/e/' + eid + '/featurescript', body=body)
+        bbox_values = response.json()['result']['message']['value']
+        result = {}
+        for item in bbox_values:
+            k = item['message']['key']['message']['value']
+            point_values = item['message']['value']['message']['value']
+            v = [x['message']['value'] for x in point_values]
+            result.update({k: v})
+        return result
 
     def get_entity_by_id(self, did, wid, eid, geo_id, entity_type):
         """get the parameters of geometry entity for specified entity id and type
@@ -94,6 +111,7 @@ class MyClient(Client):
                 "           edge_topo.id = edge_id;"
                 "           edge_topo.vertices = [];"
                 "           edge_topo.param = evCurveDefinition(context, {edge: edge_arr[j]});" # 
+                "           edge_topo.param.midpoint = evEdgeTangentLine(context, {\"edge\": edge_arr[j], \"parameter\": 0.5 }).origin;" #Makes eval_curve_midpoint obsolete
                 "           face_topo.edges = append(face_topo.edges, edge_id);"
                 "                                  "
                 "           var q_vertex = qAdjacent(edge_arr[j], AdjacencyType.VERTEX, EntityType.VERTEX);"
@@ -231,139 +249,3 @@ class MyClient(Client):
                 face_param.update({k: v})
             faces.append(face_param)
         return faces
-
-    def eval_entityID_created_by_feature(self, did, wid, eid, feat_id, entity_type):
-        """get IDs of all geometry entity created by a given feature, with specified type
-
-        Args:
-            - did (str): Document ID
-            - wid (str): Workspace ID
-            - eid (str): Element ID
-            feat_id (str): Feature ID
-            entity_type (str): 'VERTEX', 'EDGE', 'FACE', 'BODY'
-
-        Returns:
-            list: a list of entity IDs
-        """
-        if entity_type not in ['VERTEX', 'EDGE', 'FACE', 'BODY']:
-            raise ValueError("Got entity_type: %s" % entity_type)
-        body = {
-            "script":
-                "function(context is Context, queries) { "
-                "   return transientQueriesToStrings("
-                "       evaluateQuery(context, " +
-                "           qCreatedBy(makeId(\"%s\"), EntityType.%s)" % (feat_id, entity_type) +
-                "       )"
-                "   );"
-                "}",
-            "queries": []
-        }
-        res = self._api.request('post', '/api/partstudios/d/' + did + '/w/' + wid + '/e/' + eid + '/featurescript', body=body)
-
-        res_msg = res.json()['result']['message']['value']
-        entityIDs = [item['message']['value'].encode(encoding='UTF-8') for item in res_msg]
-        return entityIDs
-
-    def eval_bodydetails(self, did, wid, eid):
-        """parse the B-rep representation as a dict"""
-        res = self._api.request('get', '/api/partstudios/d/{}/w/{}/e/{}/bodydetails'.format(did, wid, eid)).json()
-        # extract local coordinate system for each face
-        for body in res['bodies']:
-            all_face_ids = [face['id'] for face in body['faces']]
-            face_entity = self.get_entity_by_id(did, wid, eid, all_face_ids, 'FACE')
-            face_params = self.parse_face_msg(face_entity.json()['result']['message']['value'])
-            for i, face in enumerate(body['faces']):
-                if face_params[i]['type'] == 'Plane':
-                    x_axis = face_params[i]['x']
-                elif face_params[i]['type'] == '':
-                    x_axis = []
-                else:
-                    x_axis = face_params[i]['coordSystem']['xAxis']
-                    z_axis = face_params[i]['coordSystem']['zAxis']
-                    face['surface'].update({'z_axis': z_axis})
-                face['surface'].update({'x_axis': x_axis})
-        return res
-
-    def eval_boundingBox(self, did, wid, eid):
-        '''
-        Get bounding box of all solid bodies for specified document / workspace / part studio.
-
-        Args:
-            - did (str): Document ID
-            - wid (str): Workspace ID
-            - eid (str): Element ID
-
-        Returns:
-            - dict: {'maxCorner': [], 'minCorner': []}
-        '''
-        body = {
-            "script":
-                "function(context is Context, queries) { " +
-                "   var q_body = qBodyType(qEverything(EntityType.BODY), BodyType.SOLID);"
-                "   var bbox = evBox3d(context, {'topology': q_body});"
-                "   return bbox;"
-                "}",
-            "queries": []
-        }
-        response = self._api.request('post', '/api/partstudios/d/' + did + '/w/' + wid + '/e/' + eid + '/featurescript', body=body)
-        bbox_values = response.json()['result']['message']['value']
-        result = {}
-        for item in bbox_values:
-            k = item['message']['key']['message']['value']
-            point_values = item['message']['value']['message']['value']
-            v = [x['message']['value'] for x in point_values]
-            result.update({k: v})
-        return result
-
-    def eval_curveLength(self, did, wid, eid, geo_id):
-        """get the length of a curve specified by its entity ID"""
-        body = {
-            "script":
-                "function(context is Context, queries) { " +
-                "   var res_list = [];"
-                "   var q_arr = evaluateQuery(context, queries.id);"
-                "   for (var i = 0; i < size(q_arr); i+= 1){"
-                "       var res = evLength(context, {\"entities\": q_arr[i]});"
-                "       res_list = append(res_list, res);"
-                "   }"
-                "   return res_list;"
-                "}",
-            "queries": [{"key": "id", "value": [geo_id]}]
-        }
-        # res = c.get_entity_by_id(did, wid, eid, 'JGV', 'EDGE')
-        response = self._api.request('post', '/api/partstudios/d/' + did + '/w/' + wid + '/e/' + eid + '/featurescript',
-                             body=body)
-        edge_len = response.json()['result']['message']['value'][0]['message']['value']
-        return edge_len
-
-    def eval_curve_midpoint(self, did, wid, eid, geo_id):
-        """get the midpoint of a curve specified by its entity ID"""
-        body = {
-            "script":
-                "function(context is Context, queries) { " +
-                "   var q_arr = evaluateQuery(context, queries.id);"
-                "   var midpoint = evEdgeTangentLine(context, {\"edge\": q_arr[0], \"parameter\": 0.5 }).origin;"
-                "   return midpoint;"
-                "}",
-            "queries": [{"key": "id", "value": [geo_id]}]
-        }
-        # res = c.get_entity_by_id(did, wid, eid, 'JGV', 'EDGE')
-        response = self._api.request('post', '/api/partstudios/d/' + did + '/w/' + wid + '/e/' + eid + '/featurescript',
-                             body=body)
-        point_info = response.json()['result']['message']['value']
-        midpoint = [x['message']['value'] for x in point_info]
-        return midpoint
-
-    def expr2meter(self, did, wid, eid, expr):
-        """convert value expresson to meter unit"""
-        body = {
-            "script":
-                "function(context is Context, queries) { "
-                "   return lookupTableEvaluate(\"%s\") * meter;" % (expr) +
-                "}",
-            "queries": []
-        }
-
-        res = self._api.request('post', '/api/partstudios/d/' + did + '/w/' + wid + '/e/' + eid +
-                             '/featurescript', body=body).json()
-        return res['result']['message']['value']

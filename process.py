@@ -2,7 +2,6 @@ import os
 import yaml
 import json
 import numpy as np
-from tqdm import tqdm
 import argparse
 from joblib import delayed, Parallel
 from parser import FeatureListParser
@@ -23,7 +22,9 @@ def process_one(data_id, link, save_dir):
 
     # filter data that use operations other than sketch + extrude
     try:
-        ofs_data = c.get_features(did, wid, eid).json()
+        file = os.listdir("files/" + data_id)[0]
+        with open("files/" + data_id + "/" + file) as stream:
+            ofs_data = yaml.safe_load(stream)
         for item in ofs_data['features']:
             if item['message']['featureType'] not in ['newSketch', 'extrude']:
                 return 0
@@ -33,7 +34,7 @@ def process_one(data_id, link, save_dir):
 
     # parse detailed cad operations
     try:
-        parser = FeatureListParser(c, did, wid, eid, data_id=data_id)
+        parser = FeatureListParser(c, did, wid, eid, ofs_data, data_id=data_id)
         result = parser.parse()
     except Exception as e:
         print("[{}], feature parsing fails:".format(data_id), e)
